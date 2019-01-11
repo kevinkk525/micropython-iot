@@ -17,6 +17,7 @@ gc.collect()
 import network
 import errno
 import utime
+import ubinascii
 
 gc.collect()
 from . import gmid, isnew, launch, Event, Lock  # __init__.py
@@ -81,9 +82,6 @@ class Client:
         :param mrt: int, max retries for qos so message does not get retried infinitely on very bad wifi
         :return:
         """
-        if header is not None:
-            if type(header) != bytearray:
-                raise TypeError("Header has to be bytearray")
         if len(buf) > 65535:
             raise ValueError("Message longer than 65535")
         preheader = bytearray(5)
@@ -92,6 +90,12 @@ class Client:
         preheader[2] = len(buf) & 0xFF
         preheader[3] = (len(buf) >> 8) & 0xFF  # allows for 65535 message length
         preheader[4] = 0  # special internal usages, e.g. for esp_link
+        preheader = ubinascii.hexlify(preheader)
+        if header is not None:
+            if type(header) != bytearray:
+                raise TypeError("Header has to be bytearray")
+            else:
+                header = ubinascii.hexlify(header)
 
         async with self.wrlock:  # May be >1 user coro launching .write
             while self.evsend.is_set():  # _writer still busy
@@ -191,6 +195,7 @@ class Client:
                 preheader[2] = len(self.my_id) & 0xFF
                 preheader[3] = (len(self.my_id) >> 8) & 0xFF  # allows for 65535 message length
                 preheader[4] = init  # clean connection, shows if device has been reset or just a wifi outage
+                preheader = ubinascii.hexlify(preheader)
                 await self._send(preheader)
                 # no header, just preheader
                 await self._send(self.my_id)  # Can throw OSError
@@ -292,9 +297,9 @@ class Client:
         start = utime.ticks_ms()
         while True:
             if preheader is None:
-                cnt = 5
-            elif preheader[1] != 0:
-                cnt = preheader[1]
+                cnt = 10  # 5
+            elif header is None and preheader[1] != 0:
+                cnt = preheader[1] * 2
             elif line is None:
                 cnt = (preheader[3] << 8) | preheader[2]
                 if cnt == 0:
@@ -302,11 +307,11 @@ class Client:
             else:
                 cnt = 1  # only newline-termination missing
             d = await self._read_small(cnt, start)
-            d is not None and print("read small got", d, cnt)
+            # d is not None and print("read small got", d, cnt)
             if d is None:
                 self.ok = True  # Got at least 1 complete message or keepalive
                 if line is not None:
-                    return preheader, header, line
+                    return preheader, header, line.decode()
                 line = None
                 preheader = None
                 header = None
@@ -315,9 +320,9 @@ class Client:
                     self.led(not self.led())
                 continue
             if preheader is None:
-                preheader = bytearray(d)
+                preheader = bytearray(ubinascii.unhexlify(d))
             elif header is None and preheader[1] != 0:
-                header = bytearray(d)
+                header = bytearray(ubinascii.unhexlify(d))
             elif line is None:
                 line = d
             else:
@@ -353,7 +358,6 @@ class Client:
                 raise OSError
 
     async def _send(self, d):  # Write a line to socket.
-        self.verbose and print("_send", d, type(d))
         start = utime.ticks_ms()
         nts = len(d)  # Bytes to send
         ns = 0  # No. sent

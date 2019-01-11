@@ -18,6 +18,7 @@ upython = sys.implementation.name == 'micropython'
 if upython:
     import usocket as socket
     import uasyncio as asyncio
+    import ubinascii
     import utime as time
     import uselect as select
     import uerrno as errno
@@ -28,6 +29,7 @@ else:
     import time
     import select
     import errno
+    import binascii as ubinascii
 
     Lock = asyncio.Lock
 
@@ -246,7 +248,7 @@ class Connection:
                     line = self.lines.pop(0)
                     if len(line):  # Ignore keepalives
                         # Discard dupes: get message ID
-                        preheader = bytearray(line[:5].encode())
+                        preheader = bytearray(ubinascii.unhexlify(line[:5].encode()))
                         mid = preheader[0]
                         # mid == 0 : client has power cycled
                         if not mid:
@@ -259,7 +261,7 @@ class Connection:
                         if self._init or not mid or isnew(mid):
                             self._init = False
                             if preheader[1] != 0:
-                                header = line[5:5 + preheader[1]]
+                                header = bytearray(ubinascii.unhexlify(line[5:5 + preheader[1]].encode()))
                                 line = line[5 + preheader[1]:]
                             else:
                                 header = None
@@ -323,11 +325,12 @@ class Connection:
         preheader[2] = len(buf) & 0xFF
         preheader[3] = (len(buf) >> 8) & 0xFF  # allows for 65535 message length
         preheader[4] = 0  # special internal usages, e.g. for esp_link
+        preheader = ubinascii.hexlify(preheader)
         end = time.time() + TO_SECS
         async with self.lock:
             await self._vwrite(preheader)
             if header is not None:
-                await self._vwrite(header)
+                await self._vwrite(ubinascii.hexlify(header))
             await self._vwrite(buf)
             if buf.endswith("\n") is False:
                 await self._vwrite(b"\n")
