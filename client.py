@@ -11,13 +11,16 @@ import gc
 gc.collect()
 import usocket as socket
 import uasyncio as asyncio
+
 gc.collect()
 
 import network
+import errno
 import utime
 
 gc.collect()
 from . import gmid, isnew, launch, Event, Lock  # __init__.py
+
 getmid = gmid()  # Message ID generator
 gc.collect()
 
@@ -25,13 +28,12 @@ gc.collect()
 class Client:
     def __init__(self, loop, my_id, server, port, timeout,
                  connected_cb=None, connected_cb_args=None,
-                 verbose=False, led=None, qos=0):
+                 verbose=False, led=None):
         self.loop = loop
         self.timeout = timeout  # Server timeout
         self.verbose = verbose
         self.led = led
-        self.qos = qos
-        self.my_id = my_id if my_id.endswith("\n") else my_id+"\n"
+        self.my_id = my_id  # does not need to be newline-terminated
         self._sta_if = network.WLAN(network.STA_IF)
         self._sta_if.active(True)
         ap = network.WLAN(network.AP_IF)
@@ -64,38 +66,42 @@ class Client:
 
     async def readline(self):
         await self.evread
-        d = self.evread.value()
+        h, d = self.evread.value()
         self.evread.clear()
-        return d
+        return h, d
 
-    # qos>0 Repeat tx if outage occurred after initial tx (1st may have been lost)
-    async def repeat(self, line):
-        await asyncio.sleep_ms(self.timeout)
-        if self.ok:
-            return
-
-        async with self.wrlock:
-            while self.evsend.is_set():  # _writer still busy
-                await asyncio.sleep_ms(30)
-            self.evsend.set(line)  # Cleared after apparently successful tx
-            while self.evsend.is_set():
-                await asyncio.sleep_ms(30)
-        self.verbose and print('Repeat', line, 'to server app')
-
-    async def write(self, buf, pause=True):
-        # Prepend message ID to a copy of buf
-        fstr =  '{:02x}{}' if buf.endswith('\n') else '{:02x}{}\n'
-        buf = fstr.format(next(getmid), buf)
+    async def write(self, header, buf, pause=True, qos=True, mrt=5):
+        """
+        Send a new message
+        :param header: optional user header, make sure it does not get modified
+        :param buf: string/byte, message to be sent
+        after sending as it is passed by reference
+        :param pause: bool, pause for tx rate limiting
+        :param qos: bool
+        :param mrt: int, max retries for qos so message does not get retried infinitely on very bad wifi
+        :return:
+        """
+        if header is not None:
+            if type(header) != bytearray:
+                raise TypeError("Header has to be bytearray")
+        if len(buf) > 65535:
+            raise ValueError("Message longer than 65535")
+        preheader = bytearray(5)
+        preheader[0] = next(getmid)
+        preheader[1] = 0 if header is None else len(header)
+        preheader[2] = len(buf) & 0xFF
+        preheader[3] = (len(buf) >> 8) & 0xFF  # allows for 65535 message length
+        preheader[4] = 0  # special internal usages, e.g. for esp_link
 
         async with self.wrlock:  # May be >1 user coro launching .write
             while self.evsend.is_set():  # _writer still busy
                 await asyncio.sleep_ms(30)
             end = utime.ticks_add(self.timeout, utime.ticks_ms())
-            self.evsend.set(buf)  # Cleared after apparently successful tx
+            self.evsend.set((preheader, header, buf))  # Cleared after apparently successful tx
             while self.evsend.is_set():
                 await asyncio.sleep_ms(30)
-        if self.qos:  # Retransmit if link has gone down
-            self.loop.create_task(self.repeat(buf))
+        if qos:  # Retransmit if link has gone down
+            self.loop.create_task(self._repeat(preheader, header, buf, mrt))
         if pause:
             dt = utime.ticks_diff(end, utime.ticks_ms())
             if dt > 0:
@@ -117,6 +123,26 @@ class Client:
         raise OSError('No initial server connection.')
 
     # **** API end ****
+
+    # qos>0 Repeat tx if outage occurred after initial tx (1st may have been lost)
+    async def _repeat(self, preheader, header, buf, mrt=5):
+        c = 0
+        while True:
+            await asyncio.sleep_ms(self.timeout)
+            if self.ok:
+                return
+
+            async with self.wrlock:
+                while self.evsend.is_set():  # _writer still busy
+                    await asyncio.sleep_ms(30)
+                self.evsend.set((preheader, header, buf))  # Cleared after apparently successful tx
+                while self.evsend.is_set():
+                    await asyncio.sleep_ms(30)
+            self.verbose and print('Repeat', (preheader, header, buf), 'to server app')
+            c += 1
+            if c >= mrt:
+                self.verbose and print("Dumping", (preheader, header, buf), "because max_retry")
+                return
 
     # Make an attempt to connect to WiFi. May not succeed.
     async def _connect(self, s):
@@ -159,12 +185,20 @@ class Client:
                 loop.create_task(_reader)
                 # Server reads ID immediately, but a brief pause is probably wise.
                 await asyncio.sleep_ms(50)
+                preheader = bytearray(5)
+                preheader[0] = 0x2C  # mid but in this case protocol identifier
+                preheader[1] = 0  # header length
+                preheader[2] = len(self.my_id) & 0xFF
+                preheader[3] = (len(self.my_id) >> 8) & 0xFF  # allows for 65535 message length
+                preheader[4] = init  # clean connection, shows if device has been reset or just a wifi outage
+                await self._send(preheader)
+                # no header, just preheader
                 await self._send(self.my_id)  # Can throw OSError
+                await self._send(b"\n")
             except OSError:
                 if init:
                     await self.bad_server()
             else:
-                # Improved cancellation code contributed by Kevin Köck
                 # Note _writer pauses before 1st tx
                 _writer = self._writer()
                 loop.create_task(_writer)
@@ -179,11 +213,11 @@ class Client:
                 asyncio.cancel(_reader)
                 asyncio.cancel(_writer)
                 asyncio.cancel(_keepalive)
-                await asyncio.sleep(1)  # wait for cancellation
+                # await asyncio.sleep(1)  # wait for cancellation
                 if self._concb is not None:
                     # apps might need to know if they lost connection to the server
                     launch(self._concb, False, *self._concbargs)
-#                await asyncio.sleep(1)  # wait for cancellation
+                await asyncio.sleep(1)  # wait for cancellation
             finally:
                 init = False
                 self.close()  # Close socket
@@ -197,9 +231,9 @@ class Client:
         self.evread.clear()  # No data read yet
         try:
             while True:
-                line = await self._readline()  # OSError on fail
+                preheader, header, line = await self._readline()  # OSError on fail
                 # Discard dupes
-                mid = int(line[0:2], 16)
+                mid = preheader[0]
                 # mid == 0 : Server has power cycled
                 if not mid:
                     isnew(-1)  # Clear down rx message record
@@ -207,8 +241,9 @@ class Client:
                 if self._init or not mid or isnew(mid):
                     self._init = False
                     # Read succeeded: flag .readline
-                    self.evread.set(line[2:].decode())
-                    #self.evread.set(''.join((line[2:].decode(), '\n')))  line has \n
+                    if self.evread.is_set():
+                        self.verbose and print("Dumping unread message", self.evread.value())
+                    self.evread.set((header, line))
                 if c == self.connects:
                     self.connects += 1  # update connect count
         except OSError:
@@ -224,7 +259,14 @@ class Client:
             while True:
                 await self.evsend
                 async with self.lock:
-                    await self._send(self.evsend.value())
+                    preheader, header, line = self.evsend.value()
+                    self.verbose and print("_write", preheader, header, line)
+                    await self._send(preheader)
+                    if header is not None:
+                        await self._send(header)
+                    await self._send(line)
+                    if line.endswith("\n") is False:
+                        await self._send(b"\n")
                 self.verbose and print('Sent data', self.evsend.value())
                 self.evsend.clear()  # Sent unless other end has failed and not yet detected
         except OSError:
@@ -244,30 +286,74 @@ class Client:
     # are joined into a line. Blank lines are keepalive packets which reset
     # the timeout: _readline() pauses until a complete line has been received.
     async def _readline(self):
-        line = b''
+        line = None
+        preheader = None
+        header = None
         start = utime.ticks_ms()
         while True:
-            if line.endswith(b'\n'):
-                self.ok = True  # Got at least 1 packet
-                if len(line) > 1:
-                    return line
-                line = b''
+            if preheader is None:
+                cnt = 5
+            elif preheader[1] != 0:
+                cnt = preheader[1]
+            elif line is None:
+                cnt = (preheader[3] << 8) | preheader[2]
+                if cnt == 0:
+                    line = b""
+            else:
+                cnt = 1  # only newline-termination missing
+            d = await self._read_small(cnt, start)
+            d is not None and print("read small got", d, cnt)
+            if d is None:
+                self.ok = True  # Got at least 1 complete message or keepalive
+                if line is not None:
+                    return preheader, header, line
+                line = None
+                preheader = None
+                header = None
                 start = utime.ticks_ms()  # Blank line is keepalive
                 if self.led is not None:
                     self.led(not self.led())
-            d = self.sock.readline()
+                continue
+            if preheader is None:
+                preheader = bytearray(d)
+            elif header is None and preheader[1] != 0:
+                header = bytearray(d)
+            elif line is None:
+                line = d
+            else:
+                raise OSError  # got unexpected characters instead of \n
+
+    async def _read_small(self, cnt, start):
+        m = b''
+        rcnt = cnt
+        while True:
+            try:
+                d = self.sock.recv(rcnt)
+            except OSError as e:
+                if e.args[0] == errno.EAGAIN:
+                    await asyncio.sleep_ms(50)
+                    continue
+                else:
+                    raise OSError
             if d == b'':
                 raise OSError
             if d is None:  # Nothing received: wait on server
                 await asyncio.sleep_ms(100)
-            elif line == b'':
-                line = d
+            elif d == b"\n":
+                return None  # either EOF or keepalive
+            elif d.startswith(b"\n"):
+                d = d[1:]
             else:
-                line = b''.join((line, d))
+                m = b''.join((m, d))
+            if len(m) == cnt:
+                return m
+            else:
+                rcnt = cnt - len(m)
             if utime.ticks_diff(utime.ticks_ms(), start) > self.timeout:
                 raise OSError
 
     async def _send(self, d):  # Write a line to socket.
+        self.verbose and print("_send", d, type(d))
         start = utime.ticks_ms()
         nts = len(d)  # Bytes to send
         ns = 0  # No. sent

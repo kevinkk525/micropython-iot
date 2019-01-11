@@ -332,7 +332,7 @@ class App:
 
     async def reader(self):
         while True:
-            line = await self.cl.readline()  # Wait until data received
+            header, line = await self.cl.readline()  # Wait until data received
             data = ujson.loads(line)
             print('Got', data, 'from server app')
 
@@ -453,7 +453,7 @@ class App:
         while True:
             # Next line will pause for client to send a message. In event of an
             # outage it will pause for its duration.
-            line = await self.conn.readline()
+            header, line = await self.conn.readline()
             self.data = json.loads(line)
             print('Got', self.data, 'from remote', self.client_id)
 

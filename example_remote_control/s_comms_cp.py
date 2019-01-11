@@ -51,7 +51,7 @@ class App:
     async def reader(self):
         print('Started reader')
         while True:
-            line = await self.conn.readline()  # Pause in event of outage
+            header, line = await self.conn.readline()  # Pause in event of outage
             App.data = json.loads(line)
             print('Got', App.data, 'from remote', self.client_id)
             App.trig_send.set()

@@ -5,13 +5,16 @@
 
 import gc
 import uasyncio as asyncio
+
 gc.collect()
 from micropython_iot import client
+
 gc.collect()
 import ujson
 from machine import Pin
 
 from . import local
+
 gc.collect()
 
 
@@ -36,7 +39,7 @@ class App:
         while True:
             # Attempt to read data: in the event of an outage, .readline()
             # pauses until the connection is re-established.
-            line = await self.cl.readline()
+            header, line = await self.cl.readline()
             data = ujson.loads(line)
             # Receives [restart count, uptime in secs]
             print('Got', data, 'from server app')
@@ -54,7 +57,7 @@ class App:
             data[2] = gc.mem_free()
             print('Sent', data, 'to server app\n')
             # .write() behaves as per .readline()
-            await self.cl.write(ujson.dumps(data))
+            await self.cl.write(None, ujson.dumps(data))
             await asyncio.sleep(5)
 
     def close(self):
