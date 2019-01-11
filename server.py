@@ -28,6 +28,7 @@ else:
     import time
     import select
     import errno
+
     Lock = asyncio.Lock
 
 TIM_TINY = 0.05  # Short delay avoids 100% CPU utilisation in busy-wait loops
@@ -101,8 +102,17 @@ class Connection:
 
     @classmethod
     def go(cls, loop, to_secs, data, verbose, c_sock, s_sock, expected):
+        print("init data:", data, len(data))
         client_id, init_str = data.split('\n', 1)
+        preheader = bytearray(client_id[:5].encode())
+        client_id = client_id[5:]
+        if preheader[0] != 0x2C:
+            verbose and print("Got wrong connection protocol", preheader[0])
+            c_sock.close()
+            return
         verbose and print('Got connection from client', client_id)
+        if preheader[4] == 1:
+            verbose and print("Reconnected client", client_id)
         if cls._server_sock is None:  # 1st invocation
             cls._server_sock = s_sock
             cls._expected.update(expected)
@@ -187,7 +197,7 @@ class Connection:
 
     def status(self):
         return self._sock is not None
-    
+
     __call__ = status
 
     def __await__(self):
@@ -212,15 +222,24 @@ class Connection:
             while self():
                 if len(self._lines):
                     line = self._lines.pop(0)
-                    # Discard dupes: get message ID
-                    mid = int(line[0:2], 16)
-                    # mid == 0 : client has power cycled
-                    if not mid:
-                        isnew(-1)
-                    # _init : server has powered up
-                    if self._init or not mid or isnew(mid):
-                        self._init = False
-                        return '{}{}'.format(line[2:], '\n')
+                    if len(line):  # Ignore keepalives
+                        # Discard dupes: get message ID
+                        preheader = bytearray(line[:5].encode())
+                        mid = preheader[0]
+                        # mid == 0 : client has power cycled
+                        if not mid:
+                            isnew(-1)
+                        if isnew(mid):
+                            if preheader[1] != 0:
+                                header = line[5:5 + preheader[1]]
+                                line = line[5 + preheader[1]:]
+                            else:
+                                header = None
+                                line = line[5:]
+                            print("Got message", preheader, header, line)
+                            return header, line  # API change, also line is not new-line terminated
+                        else:
+                            print("Dumped dupe mid", mid)
 
                 await asyncio.sleep(TIM_TINY)  # Limit CPU utilisation
             self._verbose and print('Read client disconnected: closing connection.')
@@ -263,26 +282,64 @@ class Connection:
 
     async def _keepalive(self):
         while True:
-            await self._vwrite(None)
-            await asyncio.sleep(self._tim_ka)
+            async with self.lock:
+                await self._vwrite(None)
+                await asyncio.sleep(self._tim_ka)
 
     # qos>0 Repeat tx if outage occurred after initial tx (1st may have been lost)
-    async def _do_qos(self, buf):
+    async def _do_qos(self, preheader, header, buf, mrt=5):
+        c = 0
         while True:
             await asyncio.sleep(self._to_secs)
             if self():
                 return
-            await self._vwrite(buf)
-            self._verbose and print('Repeat', buf, 'to server app')
+            async with self._lock:
+                await self._vwrite(preheader)
+                if header is not None:
+                    await self._vwrite(header)
+                await self._vwrite(buf)
+                if buf.endswith("\n") is False:
+                    await self._vwrite(b"\n")
+            self._verbose and print('Repeat', (preheader, header, buf), 'to server app')
+            c += 1
+            if c >= mrt:
+                self._verbose and print("Dumping", (preheader, header, buf), "because max_retry")
+                return
 
-    async def write(self, line, pause=True, qos=True):
-        fstr =  '{:02x}{}' if line.endswith('\n') else '{:02x}{}\n'
-        buf = fstr.format(next(self._getmid), line)  # Local copy
+    async def write(self, buf, header=None, pause=True, qos=True, mrt=5):
+        """
+        Send a new message
+        :param buf: string/byte, message to be sent
+        :param header: optional user header, make sure it does not get modified
+        after sending as it is passed by reference
+        :param qos: int
+        :param pause: bool, pause for tx rate limiting
+        :param mrt: int, max retries for qos so message does not get retried infinitely on very bad wifi
+        :return:
+        """
+        if header is not None:
+            if type(header) != bytearray:
+                raise TypeError("Header has to be bytearray")
+        if len(buf) > 65535:
+            raise ValueError("Message longer than 65535")
+        preheader = bytearray(5)
+        preheader[0] = next(self._getmid)
+        preheader[1] = 0 if header is None else len(header)
+        preheader[2] = len(buf) & 0xFF
+        preheader[3] = (len(buf) >> 8) & 0xFF  # allows for 65535 message length
+        preheader[4] = 0  # special internal usages, e.g. for esp_link
         end = time.time() + self._to_secs
-        await self._vwrite(buf)
+        async with self._lock:
+            await self._vwrite(preheader)
+            if header is not None:
+                await self._vwrite(header)
+            await self._vwrite(buf)
+            if buf.endswith("\n") is False:
+                await self._vwrite(b"\n")
+        self._verbose and print('Sent data', preheader, header, buf)
         # Ensure qos by conditionally repeating the message
         if qos:
-            self._loop.create_task(self._do_qos(buf))
+            self._loop.create_task(self._do_qos(preheader, header, buf))
         if pause:  # Throttle rate of non-keepalive messages
             dt = end - time.time()
             if dt > 0:
@@ -300,14 +357,14 @@ class Connection:
                 while self._wr_pause:
                     await asyncio.sleep(self._tim_short)
 
-            async with self._wlock:  # >1 writing task?
-                ok = await self._send(buf)  # Fail clears status
+            ok = await self._send(buf)  # Fail clears status
 
     # Send a string as bytes. Return True on apparent success, False on failure.
     async def _send(self, d):
         if not self():
             return False
-        d = d.encode('utf8')
+        if type(d) == str:
+            d = d.encode('utf8')
         start = time.time()
         while len(d):
             try:
@@ -334,6 +391,7 @@ class Connection:
             self._verbose and print('fail detected')
             self._sock.close()
             self._sock = None
+
 
 # API aliases
 client_conn = Connection.client_conn

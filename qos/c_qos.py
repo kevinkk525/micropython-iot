@@ -10,6 +10,7 @@ gc.collect()
 import ujson
 from machine import Pin
 from . import local
+
 gc.collect()
 from micropython_iot import client
 
@@ -36,7 +37,7 @@ class App:
     async def reader(self):
         self.verbose and print('Started reader')
         while True:
-            line = await self.cl.readline()
+            header, line = await self.cl.readline()
             data = ujson.loads(line)
             rxmid = data[0]
             if rxmid in self.rxbuf:

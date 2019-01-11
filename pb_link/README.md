@@ -163,7 +163,7 @@ interface to the ESP8266 (and thence to the server). User coros communicate
 thus:
 
 ```python
-    line = await self.readline()  # Read a \n terminated line from server app
+    header, line = await self.readline()  # Read a \n terminated line from server app with user header
     await self.write(line)  # Write a line.
 ```
 The `.write` method will append a newline to the line if not present. The line

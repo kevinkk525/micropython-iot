@@ -11,15 +11,19 @@ import network
 gc.collect()
 
 from . import asi2c
+
 gc.collect()
 from machine import Pin, I2C
 
 import sys
+
 sys.path.append(sys.path.pop(0))  # ******* TEMPORARY *******
 
 from micropython_iot import client
 import ujson
+
 gc.collect()
+
 
 class LinkClient(client.Client):
     def __init__(self, loop, config, swriter, server_status, verbose):
@@ -115,7 +119,7 @@ class App:
     async def from_server(self):
         self.verbose and print('Started from_server task.')
         while True:
-            line = await self.cl.readline()
+            header, line = await self.cl.readline()
             if line.startswith('\n'):
                 print('bad start')
             else:
