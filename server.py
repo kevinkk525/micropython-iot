@@ -344,7 +344,7 @@ class Connection:
         self._verbose and print('Sent data', preheader, header, buf)
         # Ensure qos by conditionally repeating the message
         if qos:
-            self._loop.create_task(self._do_qos(preheader, header, buf))
+            self._loop.create_task(self._do_qos(preheader, header, buf, mrt))
         if pause:  # Throttle rate of non-keepalive messages
             dt = end - time.time()
             if dt > 0:
@@ -396,7 +396,6 @@ class Connection:
             self._verbose and print('fail detected')
             self._sock.close()
             self._sock = None
-
 
 
 # API aliases
