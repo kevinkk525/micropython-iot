@@ -17,6 +17,7 @@ gc.collect()
 import network
 import errno
 import utime
+import ubinascii
 
 gc.collect()
 from . import gmid, isnew, launch, Event, Lock  # __init__.py
@@ -86,9 +87,6 @@ class Client:
         :param mrt: int, max retries for qos so message does not get retried infinitely on very bad wifi
         :return:
         """
-        if header is not None:
-            if type(header) != bytearray:
-                raise TypeError("Header has to be bytearray")
         if len(buf) > 65535:
             raise ValueError("Message longer than 65535")
         preheader = bytearray(5)
@@ -97,6 +95,12 @@ class Client:
         preheader[2] = len(buf) & 0xFF
         preheader[3] = (len(buf) >> 8) & 0xFF  # allows for 65535 message length
         preheader[4] = 0  # special internal usages, e.g. for esp_link
+        preheader = ubinascii.hexlify(preheader)
+        if header is not None:
+            if type(header) != bytearray:
+                raise TypeError("Header has to be bytearray")
+            else:
+                header = ubinascii.hexlify(header)
 
         tsent = await self._do_write(preheader, header, buf)
         if qos:  # Retransmit if link has gone down
@@ -125,7 +129,7 @@ class Client:
 
     # qos>0 Repeat tx if outage occurred after initial tx (1st may have been lost)
     async def _do_qos(self, preheader, header, buf, mrt=5):
-        c=0
+        c = 0
         while True:
             await asyncio.sleep_ms(self._to)
             if self._ok:
@@ -196,9 +200,10 @@ class Client:
                 preheader[2] = len(self._my_id) & 0xFF
                 preheader[3] = (len(self._my_id) >> 8) & 0xFF  # allows for 65535 message length
                 preheader[4] = init  # clean connection, shows if device has been reset or just a wifi outage
+                preheader = ubinascii.hexlify(preheader)
                 await self._send(preheader)
                 # no header, just preheader
-                await self._send(self.my_id)  # Can throw OSError
+                await self._send(self._my_id)  # Can throw OSError
                 await self._send(b"\n")
             except OSError:
                 if init:
@@ -246,7 +251,7 @@ class Client:
                 if not mid or isnew(mid):
                     # Read succeeded: flag .readline
                     if self._evread.is_set():
-                        self.verbose and print("Dumping unread message", self.evread.value())
+                        self._verbose and print("Dumping unread message", self._evread.value())
                     self._evread.set((header, line))
                 if c == self.connects:
                     self.connects += 1  # update connect count
@@ -263,7 +268,7 @@ class Client:
             while True:
                 await self._evsend
                 async with self._lock:
-                    preheader, header, line = self.evsend.value()
+                    preheader, header, line = self._evsend.value()
                     self._verbose and print("_write", preheader, header, line)
                     await self._send(preheader)
                     if header is not None:
@@ -295,9 +300,9 @@ class Client:
         start = utime.ticks_ms()
         while True:
             if preheader is None:
-                cnt = 5
-            elif preheader[1] != 0:
-                cnt = preheader[1]
+                cnt = 10  # 5
+            elif header is None and preheader[1] != 0:
+                cnt = preheader[1] * 2
             elif line is None:
                 cnt = (preheader[3] << 8) | preheader[2]
                 if cnt == 0:
@@ -305,11 +310,11 @@ class Client:
             else:
                 cnt = 1  # only newline-termination missing
             d = await self._read_small(cnt, start)
-            d is not None and print("read small got", d, cnt)
+            # d is not None and print("read small got", d, cnt)
             if d is None:
                 self._ok = True  # Got at least 1 complete message or keepalive
                 if line is not None:
-                    return preheader, header, line
+                    return preheader, header, line.decode()
                 line = None
                 preheader = None
                 header = None
@@ -318,9 +323,9 @@ class Client:
                     self._led(not self._led())
                 continue
             if preheader is None:
-                preheader = bytearray(d)
+                preheader = bytearray(ubinascii.unhexlify(d))
             elif header is None and preheader[1] != 0:
-                header = bytearray(d)
+                header = bytearray(ubinascii.unhexlify(d))
             elif line is None:
                 line = d
             else:

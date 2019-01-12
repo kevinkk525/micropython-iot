@@ -18,6 +18,7 @@ upython = sys.implementation.name == 'micropython'
 if upython:
     import usocket as socket
     import uasyncio as asyncio
+    import ubinascii
     import utime as time
     import uselect as select
     import uerrno as errno
@@ -28,10 +29,12 @@ else:
     import time
     import select
     import errno
+    import binascii as ubinascii
 
     Lock = asyncio.Lock
 
 TIM_TINY = 0.05  # Short delay avoids 100% CPU utilisation in busy-wait loops
+
 
 # Read the node ID. There isn't yet a Connection instance.
 # CPython does not have socket.readline. Return 1st string received
@@ -104,7 +107,7 @@ class Connection:
     def go(cls, loop, to_secs, data, verbose, c_sock, s_sock, expected):
         print("init data:", data, len(data))
         client_id, init_str = data.split('\n', 1)
-        preheader = bytearray(client_id[:5].encode())
+        preheader = bytearray(client_id[:10].encode())
         client_id = client_id[5:]
         if preheader[0] != 0x2C:
             verbose and print("Got wrong connection protocol", preheader[0])
@@ -122,7 +125,7 @@ class Connection:
                 c_sock.close()
             else:  # Reconnect after failure
                 cls._conns[client_id]._reconnect(c_sock)
-        else: # New client: instantiate Connection
+        else:  # New client: instantiate Connection
             Connection(loop, to_secs, c_sock, client_id, init_str, verbose)
 
     # Server-side app waits for a working connection
@@ -181,6 +184,7 @@ class Connection:
         self._rd_wait = True
         self._getmid = gmid()  # Generator for message ID's
         self._wlock = Lock()  # Write lock
+        self._lock = Lock()
         self._lines = []  # Buffer of received lines
         loop.create_task(self._read(init_str))
         loop.create_task(self._keepalive())
@@ -224,14 +228,14 @@ class Connection:
                     line = self._lines.pop(0)
                     if len(line):  # Ignore keepalives
                         # Discard dupes: get message ID
-                        preheader = bytearray(line[:5].encode())
+                        preheader = bytearray(ubinascii.unhexlify(line[:5].encode()))
                         mid = preheader[0]
                         # mid == 0 : client has power cycled
                         if not mid:
                             isnew(-1)
                         if isnew(mid):
                             if preheader[1] != 0:
-                                header = line[5:5 + preheader[1]]
+                                header = bytearray(ubinascii.unhexlify(line[5:5 + preheader[1]].encode()))
                                 line = line[5 + preheader[1]:]
                             else:
                                 header = None
@@ -282,7 +286,7 @@ class Connection:
 
     async def _keepalive(self):
         while True:
-            async with self.lock:
+            async with self._lock:
                 await self._vwrite(None)
                 await asyncio.sleep(self._tim_ka)
 
@@ -329,10 +333,11 @@ class Connection:
         preheader[3] = (len(buf) >> 8) & 0xFF  # allows for 65535 message length
         preheader[4] = 0  # special internal usages, e.g. for esp_link
         end = time.time() + self._to_secs
+        preheader = ubinascii.hexlify(preheader)
         async with self._lock:
             await self._vwrite(preheader)
             if header is not None:
-                await self._vwrite(header)
+                await self._vwrite(ubinascii.hexlify(header))
             await self._vwrite(buf)
             if buf.endswith("\n") is False:
                 await self._vwrite(b"\n")
