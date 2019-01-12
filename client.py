@@ -248,7 +248,7 @@ class Client:
                 if not mid:
                     isnew(-1)  # Clear down rx message record
                 # _init : client has restarted. mid == 0 server power up
-                if not mid or isnew(mid):
+                if isnew(mid):
                     # Read succeeded: flag .readline
                     if self._evread.is_set():
                         self._verbose and print("Dumping unread message", self._evread.value())
