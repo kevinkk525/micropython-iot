@@ -109,15 +109,9 @@ class Client:
             self._feed = lambda x: None
 
         if platform == 'esp8266':
-            self._sta_if = network.WLAN(network.STA_IF)
             ap = network.WLAN(network.AP_IF)  # create access-point interface
             ap.active(False)  # deactivate the interface
-        elif platform == 'pyboard':
-            self._sta_if = network.WLAN()
-        elif ESP32:
-            self._sta_if = network.WLAN(network.STA_IF)
-        else:
-            raise OSError(platform, 'is unsupported.')
+        self._sta_if = network.WLAN(network.STA_IF)
 
         self._sta_if.active(True)
         gc.collect()
@@ -142,7 +136,7 @@ class Client:
         while not self():
             yield from asyncio.sleep_ms(self._tim_short)
 
-    __await__ = __iter__
+    __await__ = __iter__  # not needed but suppresses warnings
 
     def status(self) -> bool:
         """
@@ -374,7 +368,7 @@ class Client:
                         await self.bad_server()
                     self._sock.close()
                     await asyncio.sleep(1)  # prevents spamming "WIFI OK" if verbose and server down
-                    continue  # temporary server outage?
+                    continue  # possibly temporary server outage?
             else:
                 self._sock.setblocking(False)
                 # Start reading before server can send: can't send until it
