@@ -29,9 +29,10 @@ communication applications so you don't need to use one library for every purpos
 but have a standardized communication protocol you can build custom apps upon.
 You can run a mqtt client app while also having a http app or an app for complex 
 calculations or a small app for any other complex internet library running on the server.
+The server can easily act as a proxy for more complex libraries.
 Multiple libraries for resilient communication are not able to run alongside each other
 because they also control the wifi. Therefore one library for all use-cases is needed.
-Examples for this can be found in [micropython_iot_generic/client/apps/mqtt.py](https://github.com/kevinkk525/micropython_iot_genericclient/apps/mqtt.py).
+Examples for this can be found in [micropython_iot_generic/client/apps/mqtt.py](https://github.com/kevinkk525/micropython_iot_generic/client/apps/mqtt.py).
 
 Sadly I was not able to just subclass the original project without significant overhead
 and we had different opinions about implementing the necessary changes as many of these
@@ -42,13 +43,13 @@ version for the usage with [micropython_iot_generic](https://github.com/kevinkk5
 
 ### Upstream
 1) Multiple concurrent qos=True writes
-Peter Hinch added the feature of multiple concurrent qos writes, providing 
+<br>Peter Hinch added the feature of multiple concurrent qos writes, providing 
 a powerful and flexible library which on the other hand has many risks if not handled
 correctly by the user. This requires the user to know a lot about the inner workings
 of the library and corner-cases if he wants to use this advanced feature or he might 
 suffer from message loss, buffer overflows and other problems.
 2) Unneeded transmissions and processing time 
-Also because of a lack of a proper header, an ACK is sent for every message, even the 
+<br>Also because of a lack of a proper header, an ACK is sent for every message, even the 
 qos=False messages that do not have message loss protection. This increases the amount 
 of messages the client has to receive and process unnecessarily.
 
