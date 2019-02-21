@@ -2,6 +2,7 @@
 # Aims to detect missed messages on socket where connection is via WiFi
 
 import sys
+
 upython = sys.implementation.name == 'micropython'
 if upython:
     import usocket as socket
@@ -17,8 +18,30 @@ else:
     import errno
     import json
     import time
+    import logging
 
-PORT = 8123
+    fh = logging.FileHandler("server.log", mode="w")
+    fh.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("[%(asctime)-15s] %(message)s")
+    ch.setFormatter(formatter)
+    fh.setFormatter(formatter)
+    log = logging.getLogger("")
+    log.setLevel(logging.DEBUG)
+    log.addHandler(ch)
+    log.addHandler(fh)
+
+
+    def print(*args):
+        m = ""
+        for arg in args:
+            m += str(arg)
+            m += "   "
+        log.debug(m)
+
+PORT = 8888
+
 
 async def run(loop):
     addr = socket.getaddrinfo('0.0.0.0', PORT, 0, socket.SOCK_STREAM)[0][-1]
@@ -35,8 +58,9 @@ async def run(loop):
             c_sock, _ = s_sock.accept()  # get client socket
             c_sock.setblocking(False)
             loop.create_task(reader(c_sock))
-#            loop.create_task(writer(c_sock))
+            loop.create_task(writer(c_sock))
         await asyncio.sleep(0.2)
+
 
 async def reader(sock):
     print('Reader start')
@@ -59,9 +83,10 @@ async def reader(sock):
             for line in l:
                 data = json.loads(line)
                 print('Got', data)
-                if last >= 0 and data[0] - last -1:
+                if last >= 0 and data[0] - last - 1:
                     raise OSError('Missed message')
                 last = data[0]
+
 
 async def writer(sock):
     print('Writer start')
@@ -73,6 +98,7 @@ async def writer(sock):
         print('sent', m)
         await asyncio.sleep(0.25)  # ???
 
+
 async def send(sock, d):
     while d:
         try:
@@ -80,11 +106,13 @@ async def send(sock, d):
         except OSError as e:
             err = e.args[0]
             if err == errno.EAGAIN:  # Would block: try later
+                print("EAGAIN send")
                 await asyncio.sleep(0.1)
         else:
             d = d[ns:]
             if d:
                 await asyncio.sleep(0.05)
+
 
 loop = asyncio.get_event_loop()
 loop.create_task(run(loop))

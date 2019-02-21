@@ -41,7 +41,11 @@ class App:
         print('Started reader')
         while True:
             line = await self.conn.readline()  # Pause in event of outage
-            self.data = json.loads(line)
+            try:
+                self.data = json.loads(line)
+            except json.JSONDecodeError:
+                print("Error converting {!s}".format(line))
+                continue
             # Receives [restart count, uptime in secs, mem_free]
             print('Got', self.data, 'from remote', self.client_id)
 
@@ -54,8 +58,8 @@ class App:
             self.data[0] = count
             count += 1
             print('Sent', self.data, 'to remote', self.client_id, '\n')
-            # .write() behaves as per .readline()
-            await self.conn.write(json.dumps(self.data))
+            # .writeline() behaves as per .readline()
+            await self.conn.writeline(json.dumps(self.data))
             await asyncio.sleep(5)
 
 

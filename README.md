@@ -6,11 +6,86 @@ other target including the Pyboard D. The design is such that the code can run
 for indefinite periods. Temporary WiFi or server outages are tolerated without
 message loss.
 
-The API is simple and consistent between client and server applications,
-comprising `write` and `readline` methods. Guaranteed message delivery is
-available.
+The original project is a collaboration between Peter Hinch and Kevin Köck.
+This project is an extension of Kevin Köck for usage with the dynamic app server
+project found in [micropython_iot_generic](https://github.com/kevinkk525/micropython_iot_generic).
+The libraries for using an esp8266 to provide this functionality to a pyboard is 
+not ported yet as I don't own a pyboard and can't properly test it.
 
-This project is a collaboration between Peter Hinch and Kevin Köck.
+
+# Differences to upstream (original project)
+
+## Goal
+
+The most notable difference between the original project is the different goal.
+
+Peter Hinch wants to provide a simple interface for sending one string from one
+side to the other. The connection is resilient and no message (with qos) gets lost.
+
+My goal is to provide an interface for communicating between client and server
+applications. The server for this can be found in [micropython_iot_generic](https://github.com/kevinkk525/micropython_iot_generic).
+This enables the client to use only one communication library for all kinds of 
+communication applications so you don't need to use one library for every purpose
+but have a standardized communication protocol you can build custom apps upon.
+You can run a mqtt client app while also having a http app or an app for complex 
+calculations or a small app for any other complex internet library running on the server.
+Multiple libraries for resilient communication are not able to run alongside each other
+because they also control the wifi. Therefore one library for all use-cases is needed.
+Examples for this can be found in [micropython_iot_generic/client/apps/mqtt.py](https://github.com/kevinkk525/micropython_iot_genericclient/apps/mqtt.py).
+
+Sadly I was not able to just subclass the original project without significant overhead
+and we had different opinions about implementing the necessary changes as many of these
+are not needed for the simple transmission of strings, so there is now a special client 
+version for the usage with [micropython_iot_generic](https://github.com/kevinkk525/micropython_iot_generic).
+
+## Technical difference
+
+### Upstream
+1) Multiple concurrent qos=True writes
+Peter Hinch added the feature of multiple concurrent qos writes, providing 
+a powerful and flexible library which on the other hand has many risks if not handled
+correctly by the user. This requires the user to know a lot about the inner workings
+of the library and corner-cases if he wants to use this advanced feature or he might 
+suffer from message loss, buffer overflows and other problems.
+2) Unneeded transmissions and processing time 
+Also because of a lack of a proper header, an ACK is sent for every message, even the 
+qos=False messages that do not have message loss protection. This increases the amount 
+of messages the client has to receive and process unnecessarily.
+
+### This repository
+My client implementation is only slightly different but as my goal is to provide a safe 
+to use library and extend its functionality, I had to make small changes:
+1) I removed the feature of multiple concurrent writes for qos messages. 
+This means that one qos message is sent after the previous one received its acknowledge 
+message, which is also the default in the upstream project. 
+Non-qos messages are not restricted in this way. 
+2) Without going into technical explanations the client library sends a header additionally
+to the user message and also optimizes RAM usage and reduces the risk for RAM fragmentation. 
+These were also the reasons for not just subclassing the original project, it would result 
+in a significant increase in RAM usage (especially temporary during message conversions) 
+and fragmentation.
+The additional header was needed to keep the RAM overhead for supporting multiple apps on
+the client to a minimum.
+3) The message order is also ensured, even when writing from multiple coroutines.
+4) Because of a proper message header, acknowledge messages are only sent for qos=True messages
+to prevent unneeded message transmissions and processing time.
+
+## API differences
+
+1) Client and server applications use `read` and `write` methods to
+communicate when using headers and `readline` and `writeline` methods to simply
+write a string.
+Upstream only has `readline` and `write` for sending/receiving a string.
+
+2) The received messages are automatically converted from json which means that
+`read` and `readline` both return the converted object (dict, list, str) and not
+a string as in upstream. This is because of performance and RAM optimizations.
+
+3) To have a similar interface as the read methods, the `write` and `writeline`
+methods automatically convert the given object to a json string. Therefore the 
+user application does not need to think about converting objects to and from a 
+network compatible string.
+
 
 # 0. MicroPython IOT application design
 
@@ -63,7 +138,7 @@ Benefits are:
  barring errors in the application design, crash-free 24/7 operation is a
  realistic prospect.
  4. The amount of code running on the remote is smaller than that required to
- run a resilient internet protocol such as [this MQTT version](https://github.com/peterhinch/micropython-mqtt.git).
+ run a resilient internet protocol such as [this MQTT version](https://github.com/kevinkk525/micropython-mqtt.git).
  5. The server side application runs on a relatively powerful machine. Even
  minimal hardware such as a Raspberry Pi has the horsepower easily to support
  TLS and to maintain concurrent links to  multiple client nodes. Use of
@@ -90,7 +165,7 @@ This repo comprises code for resilent full-duplex connections between a server
 application and multiple clients. Each connection is like a simplified socket,
 but one which persists through outages and offers guaranteed message delivery.
 
- 0. [MicroPython IOT application design](./README.md#0-microPython-iot-application-design)  
+ 0. [MicroPython IOT application design](./README.md#0.-MicroPython-IOT-application-design)  
  1. [Contents](./README.md#1-contents)  
  2. [Design](./README.md#2-design)  
   2.1 [Protocol](./README.md#21-protocol)  
@@ -102,11 +177,9 @@ but one which persists through outages and offers guaranteed message delivery.
    4.1.1 [Initial Behaviour](./README.md#411-initial-behaviour)  
    4.1.2 [Watchdog Timer](./README.md#412-watchdog-timer)  
  5. [Server side applications](./README.md#5-server-side-applications)  
-  5.1 [The server module](./README.md#51-the-server-module)  
  6. [Ensuring resilience](./README.md#6-ensuring-resilience) Guidelines for application design.   
  7. [Quality of service](./README.md#7-quality-of-service) Guaranteeing message delivery.  
-  7.1 [The qos argument](./README.md#71-the-qos-argument)  
-  7.2 [The wait argument](./README.md#71-the-wait-argument) Concurrent writes of qos messages.  
+  7.1 [The qos argument](./README.md#71-the-qos-argument)   
  8. [Performance](./README.md#8-performance)  
   8.1 [Latency and throughput](./README.md#81-latency-and-throughput)  
   8.2 [Client RAM utilisation](./README.md#82-client-ram-utilisation)  
@@ -132,8 +205,9 @@ discussed in [section 8](./README.md#8-performance).
 
 ## 2.1 Protocol
 
-Client and server applications use `readline` and `write` methods to
-communicate: in the case of an outage of WiFi or the connected endpoint, the
+Client and server applications use `read` and `write` methods to
+communicate when using headers and `readline` and `writeline` methods to simply
+write a string: in the case of an outage of WiFi or the connected endpoint, the
 method will pause until the outage ends.
 
 The link status is determined by periodic exchanges of keepalive messages. This
@@ -160,9 +234,9 @@ determine which physical client is associated with an incoming connection.
  control another.
  6. `qos` Package demonstrating the qos (qality of service) implementation, see
  [Quality of service](./README.md#7-quality-of-service).
- 7. `pb_link` Package enabling a Pyboard V1.x to commuicate with the server via
- an ESP8266 connected by I2C. See [documentation](./pb_link/README.md).
- 8. `esp_link` Package for the ESP8266 used in the Pyboard link.
+ 7. `pb_link` Package enabling a Pyboard V1.x to communicate with the server via
+ an ESP8266 connected by I2C. See [documentation](./pb_link/README.md). [Not ported]
+ 8. `esp_link` Package for the ESP8266 used in the Pyboard link. [Not ported]
 
 ## 3.1 Installation
 
@@ -199,8 +273,8 @@ MY_ID = '1'  # Client-unique string.
 SERVER = '192.168.0.41'  # Server IP address.
 SSID = 'my_ssid'
 PW = 'WiFi_password'
-PORT = 8123
-TIMEOUT = 2000
+PORT = 9999
+TIMEOUT = 4000
 ```
 
 The ESP8266 can store WiFi credentials in flash memory. If desired, ESP8266
@@ -244,7 +318,7 @@ commands (amend the boot device for non-ESP8266 clients):
 ```
 rshell -p /dev/ttyS3  # adapt the port to your situation
 mkdir /pyboard/micropython_iot   # create directory on your esp8266  
-cp client.py __init__.py /pyboard/micropython_iot/
+cp client.mpy __init__.py /pyboard/micropython_iot/
 cp -r examples /pyboard/micropython_iot/
 cp -r qos /pyboard/micropython_iot/
 cp -r remote /pyboard/micropython_iot/
@@ -258,7 +332,7 @@ This illustrates up to four clients communicating with the server. The demo
 expects the clients to have ID's in the range 1 to 4: if using multiple clients
 edit each one's `local.py` accordingly.
 
-On the server navigate to the parent directory of `micropython_iot`and run:
+On the server navigate to the parent directory of `micropython_iot` and run:
 ```
 python3 -m micropython_iot.examples.s_app_cp
 ```
@@ -309,23 +383,6 @@ On the client, after editing `/pyboard/qos/local.py`, run:
 from micropython_iot.qos import c_qos
 ```
 
-#### The fast qos demo
-
-This tests the option of concurrent `qos` writes. This is an advanced feature
-discussed in [section 7.1](./README.md#71-the-wait-argument). To run the demo,
-on the server navigate to the parent directory of `micropython_iot` and run:
-```
-python3 -m micropython_iot.qos.s_qos_fast
-```
-or
-```
-micropython -m micropython_iot.qos.s_qos_fast
-```
-On the client, after editing `/pyboard/qos/local.py`, run:
-```
-from micropython_iot.qos import c_qos_fast
-```
-
 #### Troubleshooting the demos
 
 If `local.py` specifies an SSID, on startup the demo programs will pause
@@ -346,14 +403,13 @@ communication can begin. This is done using `Client.write` and
 Every client ha a unique ID (`MY_ID`) typically stored in `local.py`. The ID
 comprises a string subject to the same constraint as messages:
 
-Messages comprise a single line of text; if the line is not terminated with a
-newline ('\n') the client library will append it. Newlines are only allowed as
-the last character. Blank lines will be ignored.
+Messages comprise a single line of text; It's only called *line* because of the
+functionality of the upstream library. In this library you can pass any type that
+can be converted by ujson.
 
 A basic client-side application has this form:
 ```python
 import uasyncio as asyncio
-import ujson
 from micropython_iot import client
 import local  # or however you configure your project
 
@@ -376,8 +432,7 @@ class App:
 
     async def reader(self):
         while True:
-            line = await self.cl.readline()  # Wait until data received
-            data = ujson.loads(line)
+            data = await self.cl.readline()  # Wait until data received
             print('Got', data, 'from server app')
 
     async def writer(self):
@@ -387,7 +442,7 @@ class App:
             data[0] = count
             count += 1
             print('Sent', data, 'to server app\n')
-            await self.cl.write(ujson.dumps(data))
+            await self.cl.write(data)
             await asyncio.sleep(5)
 
     def close(self):
@@ -417,7 +472,7 @@ Constructor args:
  4. `port=8123` The port the server listens on.
  5. `ssid=''` WiFi SSID. May be blank for ESP82666 with credentials in flash.
  6. `pw=''` WiFi password. 
- 7. `timeout=2000` Connection timeout in ms. If a connection is unresponsive
+ 7. `timeout=4000` Connection timeout in ms. If a connection is unresponsive
  for longer than this period an outage is assumed.
  8. `conn_cb=None` Callback or coroutine that is called whenever the connection
  changes.
@@ -434,16 +489,21 @@ Constructor args:
 
 Methods (asynchronous):
  1. `readline` No args. Pauses until data received. Returns a line.
- 2. `write` Args: `buf`, `qos=True`, `wait=True`. `buf` holds a line of text.  
- If `qos` is set, the system guarantees delivery. If it is clear messages may
+ 2. `read` No args. Pauses until data received. Returns a header and a line/message.
+ 3. `write` Args: `header`, `buf`, `qos=True`. `header` can be bytearray or None.
+ `buf` holds a line of text. 
+  If `qos` is set, the system guarantees delivery. If it is False messages may
  (rarely) be lost in the event of an outage.__
- The `wait` arg determines the behaviour when multiple concurrent writes are
- launched with `qos` set. See [Quality of service](./README.md#7-quality-of-service).
+ See [Quality of service](./README.md#7-quality-of-service).
+ 4. `writeline` Args: `buf`, `qos=True`. `buf` holds a line of text. 
+  If `qos` is set, the system guarantees delivery. If it is False messages may
+  (rarely) be lost in the event of an outage.
+ See [Quality of service](./README.md#7-quality-of-service).
 
 The following asynchronous methods are described in Initial Behaviour below. In
 most cases they can be ignored.
- 3. `bad_wifi`
- 4. `bad_server`
+ 5. `bad_wifi`
+ 6. `bad_server`
 
 Methods (synchronous):
  1. `status` Returns `True` if connectivity is present. May also be read using
@@ -468,7 +528,7 @@ await the client status: `write` will pause until it can complete. If `write`
 is launched using `create_task` it is essential to check status otherwise
 during an outage unlimited numbers of coroutines will be created.
 
-The client buffers up to 20 incoming messages. To avoid excessive queue growth
+The client buffers up to 5 incoming messages. To avoid excessive queue growth
 applications should have a single coroutine which spends most of its time
 awaiting incoming data.
 
@@ -520,16 +580,9 @@ It may be necessary to use safe boot to bypass `main.py` to access the code.
 
 # 5. Server side applications
 
-A typical example has an `App` class with one instance per physical client
-device. This enables instances to share data via class variables. Each instance
-launches a coroutine which acquires a `Connection` instance for its individual
-client (specified by its client_id). This process will pause until the client
-has connected with the server. Communication is then done using the `readline`
-and `write` methods of the `Connection` instance.
-
-Messages comprise a single line of text; if the line is not terminated with a
-newline (`\n`) the server library will append it. Newlines are only allowed as
-the last character. Blank lines will be ignored.
+Server-side applications should use the [micropython_iot_generic](https://github.com/kevinkk525/micropython_iot_generic)
+server implementation. 
+The server files included in this repository are just for reference and examples.
 
 A basic server-side application has this form:
 ```python
@@ -584,97 +637,6 @@ if __name__ == "__main__":
     run()
 ```
 
-## 5.1 The server module
-
-Server-side applications should create and run a `server.run` task. This runs
-forever and takes the following args:
- 1. `loop` The event loop.
- 2. `expected` A set of expected client ID strings.
- 3. `verbose=False` If `True` output diagnostic messages.
- 4. `port=8123` TCP/IP port for connection. Must match clients.
- 5. `timeout=2000` Timeout for outage detection in ms. Must match the timeout
- of all `Client` instances.
-
-The `expected` arg causes the server to produce a warning message if an
-unexpected client connects, or if multiple clients have the same ID (this will
-cause tears before bedtime).
-
-The module is based on the `Connection` class. A `Connection` instance provides
-a communication channel to a specific client. The `Connection` instance for a
-given client is a singleton and is acquired by issuing
-```python
-conn = await server.client_conn(client_id)
-```
-This will pause until connectivity has been established. It can be issued at
-any time: if the `Connection` has already been instantiated, that instance will
-be returned. The `Connection` constructor should not be called by applications.
-
-The `Connection` instance:
-
-Methods (asynchronous):
- 1. `readline` No args. Pauses until data received. Returns a line.
- 2. `write` Args: `buf`, `qos=True`, `wait=True`. `buf` holds a line of text.  
- If `qos` is set, the system guarantees delivery. If it is clear messages may
- (rarely) be lost in the event of an outage.__
- The `wait` arg determines the behaviour when multiple concurrent writes are
- launched with `qos` set. See [Quality of service](./README.md#7-quality-of-service).
-
-Methods (synchronous):
- 1. `status` Returns `True` if connectivity is present. The connection state
- may also be retrieved using function call syntax (via `.__call__`).
- 2. `__getitem__` Enables the `Connection` of another client to be retrieved
- using list element access syntax. Will throw a `KeyError` if the client is
- unknown (has never connected).
-
-Class Method (synchronous):
- 1. `close_all` No args. Closes all sockets: call on exception (e.g. ctrl-c).
-
-The `Connection` class is awaitable. If
-```python
-await connection_instance
-```
-is issued, the coroutine will pause until connectivity is (re)established.
-
-Applications which always `await` the `write` method do not need to check or
-await the server status: `write` will pause until it can complete. If `write`
-is launched using `create_task` it is essential to check status otherwise
-during an outage unlimited numbers of coroutines will be created.
-
-The server buffers incoming messages but it is good practice to have a coro
-which spends most of its time waiting for incoming data.
-
-Server module coroutines:
-
- 1. `run` Args: `loop` `expected` `verbose=False` `port=8123` `timeout=2000`
- This is the main coro and starts the system. 
- `loop` is the event loop.  
- `expected` is a set containing the ID's of all clients.  
- `verbose` causes debug messages to be printed.  
- `port` is the port to listen to.  
- `timeout` is the number of ms that can pass without a keepalive until the 
-  connection is considered dead.
- 2. `client_conn` Arg: `client_id`. Pauses until the sepcified client has
- connected. Returns the `Connection` instance for that client.
- 3. `wait_all` Args: `client_id=None` `peers=None`. See below.
-
-The `wait_all` coroutine is intended for applications where clients communicate
-with each other. Typical user code cannot proceed until a given set of clients
-have established initial connectivity.
-
-`wait_all`, where a `client_id` is specified, behaves as `client_conn` except
-that it pauses until further clients have also connected. If a `client_id` is
-passed it will returns that client's `Connection` instance. If `None` is passed
-the  assumption is that the current client is already connected and the coro
-returns `None`.
-
-The `peers` argument defines which clients it must await: it must either be
-`None` or a set of client ID's. If a set of `client_id` values is passed, it
-pauses until all clients in the set have connected. If `None` is passed, it
-pauses until all clients specified in `run`'s `expected` set have connected.
-
-It is perhaps worth noting that the user application can impose a timeout on
-this by means of `asyncio.wait_for`.
-
 ###### [Contents](./README.md#1-contents)
 
 # 6. Ensuring resilience
@@ -719,8 +681,7 @@ message will be delivered exactly once. While delivery is guaranteed,
 timeliness is not. Messages are inevitably delayed for the duration of a WiFi
 or server outage where the `write` coroutine will pause for the duration.
 
-Guaranteed delivery involves a tradeoff against throughput and latency. This is
-managed by optional arguments to `.write`, namely `qos=True` and `wait=True`.
+Guaranteed delivery involves a tradeoff against throughput and latency. 
 
 ## 7.1 The qos argument
 
@@ -733,8 +694,8 @@ ESP8266 clients, to avoid risk of buffer overflow.
 
 With `qos` set, the message will be delivered exactly once.
 
-Where successive `qos` messages are sent there may be a latency issue. By
-default the transmission of a `qos` message will be delayed until reception
+Where successive `qos` messages are sent there may be a latency issue. 
+The transmission of a `qos` message will be delayed until reception
 of its predecessor's acknowledge. Consequently the `write` coroutine will
 pause, introducing latency. This serves two purposes. Firstly it ensures that
 messages are received in the order in which they were sent (see below).
@@ -744,29 +705,9 @@ detected. The first message is written, but no acknowledge is received.
 Subsequent messages are delayed, precluding the risk of ESP8266 buffer
 overflows. The interface resumes operation after the outage has cleared.
 
-## 7.2 The wait argument
-
-This default can be changed with the `wait` argument to `write`. If `False` a
-`qos` message will be sent immediately, even if acknowledge packets from
-previous messages are pending. Applications should be designed to limit the
-number of such `qos` messages sent in quick succession: on ESP8266 clients
-buffer overflows can occur. Demands on `uasyncio` are increased: it may be
-necessary to amend the default queue sizes in `get_event_loop`.
-
-If messages are sent with `wait=False` there is a chance that they may not be
-received in the order in which they were sent. As described above, in the event
-of `qos` message loss, retransmission occurs after a timeout period has
-elapsed. During that timeout period the application may have successfully sent
-another non-waiting `qos` message resulting in out of order reception.
-
-The demo programs `qos/c_qos_fast.py` (client) and `qos/s_qos_fast.py` issue
-four `write` operations with `wait=False` in quick succession. This number is
-probably near the maximum on an ESP8266. Note the need explicitly to check for
-connectivity before issuing the `write`: this is to avoid spawning large
-numbers of coroutines during an outage.
-
-In summary specifying `wait=False` should be considered an "advanced" option
-requiring testing to prove that resilence is maintained.
+While a `qos` message has not received its acknowledge, `qos`=False messages
+are delayed to ensure that a `qos` message doesn't get lost due to buffer
+overflows of a high throughput of `qos`=False messages.
 
 ###### [Contents](./README.md#1-contents)
 
@@ -786,7 +727,7 @@ latency will inevitably persist for the duration.
 
 **TIMEOUT**
 
-This defaults to 2s. On `Client` it is a constructor argument, on the server
+This defaults to 3s. On `Client` it is a constructor argument, on the server
 it is an arg to `server.run`. Its value should be common to all clients and
 the sever. It determines the time taken to detect an outage and the frequency
 of `keepalive` packets. This time was chosen on the basis of measured latency
@@ -804,7 +745,11 @@ and `uasyncio` frozen as bytecode.
 
 # 9. Extension to the Pyboard
 
-This extends the resilent link to MicroPython targets lacking a network
+My features are not ported to the Pyboard because I don't own any and can't test
+its functionality properly. The following documentation is only applicable to the
+original upstream project.
+
+This extends the resilient link to MicroPython targets lacking a network
 interface; for example the Pyboard V1.x. Connectivity is provided by an ESP8266
 running a fixed firmware build: this needs no user code.
 
@@ -836,7 +781,7 @@ connectivity.
 Outages are detected by a timeout of the receive tasks at either end. Each peer
 sends periodic `keepalive` messages consisting of a single newline character,
 and each peer has a continuously running read task. If no message is received
-in the timeout period (2s by default) an outage is declared.
+in the timeout period (3s by default) an outage is declared.
 
 From the client's perspective an outage may be of the WiFi or the server. In
 practice WiFi outages are more common: server outages on a LAN are typically
@@ -858,36 +803,8 @@ and reconnect events even in the presence of a strong WiFi signal.
 ## 10.2 Server module
 
 Server-side applications communicate via a `Connection` instance. This is
-unique to a client. It is instantiated when a specified client first connects
-and exists forever. During an outage its status becomes `False` for the
-duration. The `Connection` instance is retrieved as follows, with the
-`client_conn` method pausing until initial connectivity has been achieved:
-```python
-import server
-# Class details omitted
-    self.conn = await server.client_conn(self.client_id)
-```
-Each client must have a unique ID. When the server detects an incoming
-connection on the port it reads the client ID from the client. If a
-`Connection` instance exists for that ID its status is updated, otherwise a
-`Connection` is instantiated.
-
-The `Connection` has a continuously running coroutine `._read` which reads data
-from the client. If an outage occurs it calls the `._close` method which closes
-the socket, setting the bound variable `._sock` to `None`. This corresponds to
-a `False` status. The `._read` method pauses until a new connection occurs. The
-aim here is to read data from ESP8266 clients as soon as possible to minimise
-risk of buffer overflows.
-
-The `Connection` detects an outage by means of a timeout in the `._read`
-method: if no data or `keepalive` is received in that period an outage is
-declared, the socket is closed, and the `Connection` status becomes `False`.
-
-The `Connection` has a `._keepalive` method. This regularly sends `keepalive`
-messages to the client. Application code which blocks the scheduler can cause
-this not to be scheduled in a timely fashion with the result that the client
-declares an outage and disconnects. The consequence is a sequence of disconnect
-and reconnect events even in the presence of a strong WiFi signal.
+unique to a client. A more detailed documentation can be found in the server
+repository [micropython_iot_generic](https://github.com/kevinkk525/micropython_iot_generic).
 
 # Appendix 1 ESP32
 

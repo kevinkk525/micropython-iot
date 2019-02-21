@@ -7,7 +7,6 @@ import gc
 import uasyncio as asyncio
 
 gc.collect()
-import ujson
 from machine import Pin
 
 from . import local
@@ -31,8 +30,7 @@ class App:
     async def reader(self):
         self.verbose and print('Started reader')
         while True:
-            line = await self.cl.readline()
-            data = ujson.loads(line)
+            data = await self.cl.readline()
             self.led.value(data[0])
             print('Got', data, 'from server app')
 

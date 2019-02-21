@@ -13,7 +13,6 @@ gc.collect()
 from micropython_iot import client, Event, launch
 
 gc.collect()
-import ujson
 from machine import Pin
 from . import local
 
@@ -76,7 +75,7 @@ class App:
         self.verbose and print('Got connection')
         while True:
             await self.must_send
-            await self.cl.write(ujson.dumps([self.switch()]), False)
+            await self.cl.write([self.switch()], False)
             self.must_send.clear()
 
     def close(self):

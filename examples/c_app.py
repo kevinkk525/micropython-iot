@@ -8,7 +8,6 @@ import uasyncio as asyncio
 gc.collect()
 from micropython_iot import client
 gc.collect()
-import ujson
 # Optional LED. led=None if not required
 from sys import platform
 if platform == 'pyboard':  # D series
@@ -23,13 +22,15 @@ from . import local
 gc.collect()
 
 
-class App(client.Client):
+class App:
     def __init__(self, loop, verbose):
         self.verbose = verbose
         self.cl = client.Client(loop, local.MY_ID, local.SERVER, local.PORT, local.SSID, local.PW,
                                 local.TIMEOUT, conn_cb=self.constate, verbose=verbose,
                                 led=led, wdog=False)
         loop.create_task(self.start(loop))
+        self.latency_added = 0
+        self.count = 0
 
     async def start(self, loop):
         self.verbose and print('App awaiting connection.')
@@ -45,13 +46,13 @@ class App(client.Client):
         while True:
             # Attempt to read data: in the event of an outage, .readline()
             # pauses until the connection is re-established.
-            line = await self.cl.readline()
-            data = ujson.loads(line)
+            data = await self.cl.readline()
             # Receives [restart count, uptime in secs]
             print('Got', data, 'from server app')
 
     # Send [approx application uptime in secs, (re)connect count]
     async def writer(self):
+        import utime
         self.verbose and print('Started writer')
         data = [0, 0, 0]
         count = 0
@@ -62,8 +63,13 @@ class App(client.Client):
             gc.collect()
             data[2] = gc.mem_free()
             print('Sent', data, 'to server app\n')
-            # .write() behaves as per .readline()
-            await self.cl.write(ujson.dumps(data))
+            # .writeline() behaves as per .readline()
+            st = utime.ticks_ms()
+            await self.cl.writeline(data)
+            latency = utime.ticks_ms() - st
+            self.latency_added += latency
+            self.count += 1
+            print("Latency:", latency, "Avg Latency:", self.latency_added / self.count)
             await asyncio.sleep(5)
 
     def shutdown(self):

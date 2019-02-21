@@ -7,9 +7,9 @@ import gc
 import uasyncio as asyncio
 
 gc.collect()
-import ujson
 from machine import Pin
 from . import local
+
 gc.collect()
 from micropython_iot import client
 import urandom
@@ -39,8 +39,7 @@ class App:
     async def reader(self):
         self.verbose and print('Started reader')
         while True:
-            line = await self.cl.readline()
-            data = ujson.loads(line)
+            data = await self.cl.readline()
             rxmid = data[0]
             if rxmid in self.rxbuf:
                 self.dupes += 1
@@ -67,8 +66,7 @@ class App:
                     self.dupes, self.count_missed()]
             self.tx_msg_id += 1
             print('Sent', data, 'to server app\n')
-            dstr = ujson.dumps(data)
-            await self.cl.write(dstr)  # Wait out any outage
+            await self.cl.write(data)  # Wait out any outage
             await asyncio.sleep_ms(7000 + urandom.getrandbits(10))
 
     def close(self):

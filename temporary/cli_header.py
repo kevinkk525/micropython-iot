@@ -12,10 +12,24 @@ gc.collect()
 import network
 import ubinascii
 import machine
+import uio
 
 MY_ID = ubinascii.hexlify(machine.unique_id()).decode()
 PORT = 8888
 SERVER = '192.168.178.60'
+ACK = -1
+
+
+# Create message ID's. Initially 0 then 1 2 ... 254 255 1 2
+def gmid():
+    mid = 0
+    while True:
+        yield mid
+        mid = (mid + 1) & 0xff
+        mid = mid if mid else 1
+
+
+getmid = gmid()
 
 
 async def run(loop):
@@ -38,25 +52,58 @@ async def run(loop):
 
 
 async def reader(sock):
-    print('Reader start')
-    last = -1
-    while True:
-        line = await readline(sock)
-        data = json.loads(line)
-        print('Got', data)
-        if last >= 0 and data[0] - last - 1:
-            raise OSError('Missed message')
-        last = data[0]
+    try:
+        print('Reader start')
+        last = -1
+        while True:
+            line = await readline(sock)
+            message = uio.StringIO(line)
+            preheader = bytearray(ubinascii.unhexlify(message.read(10)))
+            try:
+                data = json.load(message)
+            except Exception:
+                data = message.read()
+            finally:
+                message.close()
+                del message
+            mid = preheader[0]
+            print('Got', data)
+            if last >= 0 and data[0] - last - 1:
+                raise OSError('Missed message')
+            last = data[0]
+    except Exception as e:
+        raise e
+    finally:
+        print("Reader stopped")
+        try:
+            print("Closing socket")
+            sock.close()
+        except:
+            pass
 
 
 async def writer(sock):
     print('Writer start')
     data = [0, 'Message from client {!s}.'.format(MY_ID)]
-    while True:
-        d = '{}\n'.format(json.dumps(data))
-        await send(sock, d.encode('utf8'))
-        data[0] += 1
-        await asyncio.sleep_ms(1000) #(253)  # ???
+    try:
+        while True:
+            mid = next(getmid)
+            d = json.dumps(data)
+            preheader = bytearray(5)
+            preheader[0] = mid
+            preheader[1] = 0
+            preheader[2] = (len(d) & 0xFF) - (1 if d.endswith(b"\n") else 0)
+            preheader[3] = (len(d) >> 8) & 0xFF  # allows for 65535 message length
+            preheader[4] = 0  # special internal usages, e.g. for esp_link or ACKs
+            preheader = ubinascii.hexlify(preheader).decode()
+            d = '{}{}\n'.format(preheader, d)
+            await send(sock, d.encode('utf8'))
+            data[0] += 1
+            await asyncio.sleep_ms(253)  # ???
+    except Exception as e:
+        raise e
+    finally:
+        print("Writer stopped")
 
 
 async def readline(sock):

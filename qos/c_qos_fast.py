@@ -8,8 +8,6 @@ import gc
 import uasyncio as asyncio
 
 gc.collect()
-import ujson
-from machine import Pin
 from . import local
 gc.collect()
 from micropython_iot import client
@@ -46,8 +44,7 @@ class App:
     async def reader(self):
         self.verbose and print('Started reader')
         while True:
-            line = await self.cl.readline()
-            data = ujson.loads(line)
+            data = await self.cl.readline()
             rxmid = data[0]
             if rxmid in self.rxbuf:
                 self.dupes += 1
@@ -76,8 +73,7 @@ class App:
                 self.tx_msg_id += 1
                 await self.cl  # Only launch write if link is up
                 print('Sent', data, 'to server app\n')
-                dstr = ujson.dumps(data)
-                loop.create_task(self.cl.write(dstr, wait=False))
+                loop.create_task(self.cl.write(data, wait=False))
             await asyncio.sleep(5)
 
     def close(self):
