@@ -12,10 +12,9 @@ project found in [micropython_iot_generic](https://github.com/kevinkk525/micropy
 The libraries for using an esp8266 to provide this functionality to a pyboard is 
 not ported yet as I don't own a pyboard and can't properly test it.
 
+## Differences to upstream (original project)
 
-# Differences to upstream (original project)
-
-## Goal
+### Goal
 
 The most notable difference between the original project is the different goal.
 
@@ -32,16 +31,16 @@ calculations or a small app for any other complex internet library running on th
 The server can easily act as a proxy for more complex libraries.
 Multiple libraries for resilient communication are not able to run alongside each other
 because they also control the wifi. Therefore one library for all use-cases is needed.
-Examples for this can be found in [micropython_iot_generic/client/apps/mqtt.py](https://github.com/kevinkk525/micropython_iot_generic/client/apps/mqtt.py).
+Examples for this can be found in [micropython_iot_generic/client/apps/mqtt.py](https://github.com/kevinkk525/micropython_iot_generic/blob/master/client/apps/mqtt.py).
 
 Sadly I was not able to just subclass the original project without significant overhead
 and we had different opinions about implementing the necessary changes as many of these
 are not needed for the simple transmission of strings, so there is now a special client 
 version for the usage with [micropython_iot_generic](https://github.com/kevinkk525/micropython_iot_generic).
 
-## Technical difference
+### Technical difference
 
-### Upstream
+#### Upstream
 1) Multiple concurrent qos=True writes
 <br>Peter Hinch added the feature of multiple concurrent qos writes, providing 
 a powerful and flexible library which on the other hand has many risks if not handled
@@ -53,7 +52,7 @@ suffer from message loss, buffer overflows and other problems.
 qos=False messages that do not have message loss protection. This increases the amount 
 of messages the client has to receive and process unnecessarily.
 
-### This repository
+#### This repository
 My client implementation is only slightly different but as my goal is to provide a safe 
 to use library and extend its functionality, I had to make small changes:
 1) I removed the feature of multiple concurrent writes for qos messages. 
@@ -86,7 +85,6 @@ a string as in upstream. This is because of performance and RAM optimizations.
 methods automatically convert the given object to a json string. Therefore the 
 user application does not need to think about converting objects to and from a 
 network compatible string.
-
 
 # 0. MicroPython IOT application design
 

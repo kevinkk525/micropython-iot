@@ -417,7 +417,7 @@ class Client:
                 isnew(-1)  # Clear down rx message record
             if isnew(mid):
                 try:
-                    self._lineq.append((preheader, line))
+                    self._lineq.append((header, line))
                 except IndexError:
                     self._evfail.set('_reader fail. Overflow.')
                     return
