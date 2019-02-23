@@ -292,7 +292,7 @@ client the directory structure must be retained.
 
 First clone the repository:
 ```
-git clone https://github.com/peterhinch/micropython-iot micropython_iot
+git clone https://github.com/kevinkk525/micropython-iot micropython_iot
 ```
 It's important to clone it into a directory *micropython_iot* as Python syntax
 disallows names containing a "-" character.
@@ -378,7 +378,7 @@ or
 micropython -m micropython_iot.qos.s_qos_cp
 ```
 On the client, after editing `/pyboard/qos/local.py`, run:
-```
+```python
 from micropython_iot.qos import c_qos
 ```
 
@@ -468,7 +468,7 @@ Constructor args:
  1. `loop` The event loop.
  2. `my_id` The client id.
  3. `server` The server IP-Adress to connect to.
- 4. `port=8123` The port the server listens on.
+ 4. `port=9999` The port the server listens on.
  5. `ssid=''` WiFi SSID. May be blank for ESP82666 with credentials in flash.
  6. `pw=''` WiFi password. 
  7. `timeout=4000` Connection timeout in ms. If a connection is unresponsive
