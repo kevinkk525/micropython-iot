@@ -248,7 +248,6 @@ class Client:
 
     def _close(self):
         self._verbose and print('Closing sockets.')
-        self._ok = False
         if self._sock is not None:  # ESP32 issue #4514
             self._sock.close()
 
