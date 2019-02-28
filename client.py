@@ -38,7 +38,7 @@ gc.collect()
 
 
 class Client:
-    def __init__(self, loop, my_id, server, port=8123,
+    def __init__(self, loop, my_id, server, port=9999,
                  ssid='', pw='', timeout=4000,
                  conn_cb=None, conn_cb_args=None,
                  verbose=False, led=None, wdog=False):
@@ -248,6 +248,7 @@ class Client:
 
     def _close(self):
         self._verbose and print('Closing sockets.')
+        self._ok = False
         if self._sock is not None:  # ESP32 issue #4514
             self._sock.close()
 
