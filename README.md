@@ -1,10 +1,10 @@
 # Introduction
 
 This library provides a resilient full duplex communication link between a WiFi
-connected board and a server on the wired LAN. The board may be an ESP8266 or
-other target including the Pyboard D. The design is such that the code can run
-for indefinite periods. Temporary WiFi or server outages are tolerated without
-message loss.
+connected board and a server on the wired LAN. The board may be an ESP8266,
+ESP32 or other target including the Pyboard D. The design is such that the code
+can run for indefinite periods. Temporary WiFi or server outages are tolerated
+without message loss.
 
 The original project is a collaboration between Peter Hinch and Kevin Köck.
 This project is an extension of Kevin Köck for usage with the dynamic app server
@@ -96,9 +96,8 @@ reliability is therefore paramount. Security is also a factor for endpoints
 exposed to the internet.
 
 Under MicroPython the available hardware for endpoints is limited. Testing has
-been done on the ESP8266 and the Pyboard D. The ESP32 running official firmware
-V1.10 remains incapable of coping with WiFi outages: see
-[Appendix 1 ESP32](./README.md#appendix-1-esp32).
+been done on the ESP8266, ESP32 and the Pyboard D. The ESP32 must run firmware
+dated on or after 25th March 2019.
 
 The ESP8266 remains as a readily available inexpensive device which, with care,
 is capable of long term reliable operation. It does suffer from limited
@@ -186,7 +185,6 @@ but one which persists through outages and offers guaranteed message delivery.
  10. [How it works](./README.md#10-how-it-works)  
   10.1 [Interface and client module](./README.md#101-interface-and-client-module)  
   10.2 [Server module](./README.md#102-server-module)  
- [Appendix 1 ESP32](./README.md#appendix-1-esp32)
 
 # 2. Design
 
@@ -245,7 +243,8 @@ installation on that platform.
 
 #### Firmware/Dependency
 
-On all client platforms firmware must be V1.10 or later.
+Firmware must be V1.10 or later; on ESP32 it must be more recent, specifically
+builds dated 25th March 2019 or later.
 
 On ESP8266 it is easiest to use the latest release build of firmware: such
 builds incorporate `uasyncio` as frozen bytecode. Daily builds do not.
@@ -263,7 +262,8 @@ On ESP8266 it is necessary to
 
 #### Preconditions
 
-The demo programs store client configuration data in a file `local.py`. This
+The demo programs store client configuration data in a file `local.py`. Each
+demo has its own `local.py` located in the directory of the demo code. This
 contains the following constants which should be edited to match local
 conditions:
 
@@ -804,19 +804,3 @@ and reconnect events even in the presence of a strong WiFi signal.
 Server-side applications communicate via a `Connection` instance. This is
 unique to a client. A more detailed documentation can be found in the server
 repository [micropython_iot_generic](https://github.com/kevinkk525/micropython_iot_generic).
-
-# Appendix 1 ESP32
-
-Using official firmware V1.10 the ESP32 seems incapable of recovering from an
-outage. The client initially connects and runs. When an outage occurs this is
-detected in the usual way by a timeout. Unfortunately I failed to discover a
-strategy for detecting when the outage was over. The station interface
-`isconnected` method always returns `True` even if you explicitly disconnect.
-You can issue a `connect` statement but I could find no way to determine
-whether the attempt was successful.
-
-In my view the ESP32 running official MicroPython remains unsuitable for a
-resilient link.
-
-Contributions and suggestions are invited. Also any test results for the
-Loboris port.
